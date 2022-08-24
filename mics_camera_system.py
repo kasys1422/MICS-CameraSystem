@@ -1469,7 +1469,7 @@ class MainLiteGui():
 
             ras_pi_settings_frame = tk.Frame(self.ras_pi_window)
             ras_pi_settings_label = tk.Label(ras_pi_settings_frame, text=_('Raspberry Pi Settings'), font=("", 20))
-            shutdown_button = tk.Button(ras_pi_settings_frame, text=_('Shutdown'), font=("", 20), command=(lambda:(subprocess.run(['shutdown', '-h', '-t', '5', '-f']), self.settings_q_exit.put(1), self.window.destroy()) if tk.messagebox.askyesno(_('Confirm'), _('Do you want to shut down?')) == True else print("[Info] Shutdown canceled")))
+            shutdown_button = tk.Button(ras_pi_settings_frame, text=_('Shutdown'), font=("", 20), command=(lambda:(subprocess.run(['shutdown', '-h', '+1']), self.settings_q_exit.put(1), self.window.destroy()) if tk.messagebox.askyesno(_('Confirm'), _('Do you want to shut down?')) == True else print("[Info] Shutdown canceled")))
 
             ras_pi_settings_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
             ras_pi_settings_label.place(x=20, y=10)
