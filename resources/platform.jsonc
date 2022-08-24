@@ -82,15 +82,19 @@
 # for embedded devices and distribution in exe format (other than source code only). #
 ######################################################################################
 
+[DISABLE_TRANSLATION]
+ Disable the multilingual support feature.
+ Prease write true or false into json.
 */
 
 //json
 {
   "PLATFORM":"Windows (x64)",
   "GUI_MODE":"Full",
-  "DEBUG_OPTION":true,
+  "DEBUG_OPTION":false,
   "PERSON_DETECTION_WITH_HOG_SVM":false,
   "ALLOW_LAUNCH_SYSTEM_WHEN_COULD_NOT_CONNECT_TO_SERVER":true,
   "CAM_ROTATE":false,
-  "MODE_OF_DISRUBUTION":"With third party libs"
+  "MODE_OF_DISRUBUTION":"With third party libs",
+  "DISABLE_TRANSLATION":false
 }

@@ -1,7 +1,7 @@
 # mics_camera_system
 # 2022 kasys1422
 # The core app of MICS(Measuring Interest with a Camera System)
-VERSION = '0.0.14'
+VERSION = '0.1.0'
 
 # Import
 import os
@@ -19,6 +19,7 @@ import cv2
 from openvino.inference_engine import IECore
 import websocket
 
+# Load platform information
 try:
     with open('./resources/platform.jsonc', 'r', newline='', encoding="utf-8") as f:
         text = re.sub(r'/\*[\s\S]*?\*/|//.*', '', f.read())
@@ -33,6 +34,7 @@ try:
             SHOW_TPL = True
         else:
             SHOW_TPL = False
+        DISABLE_TRANSLATION = json_text['DISABLE_TRANSLATION']
 except:
     print('[Error] Could nor read platform settings. Please check "./resources/platform.jsonc".')
     PLATFORM = "Unknown platform"
@@ -42,6 +44,7 @@ except:
     ALLOW_WITHOUT_SERVER = False
     CAM_ROTATE = False
     SHOW_TPL = False
+    DISABLE_TRANSLATION = False
 
 LINUX = 'Linux (x64)'
 WINDOWS = 'Windows (x64)'
@@ -55,16 +58,22 @@ GUI_FULL = 'Full'
 GUI_LITE = 'Lite'
 GUI_LEGACY = 'Legacy'
 
+# Load additional modules according to platform information
 if GUI_MODE == GUI_FULL:
     import dearpygui.dearpygui as dpg
-else:
+elif GUI_MODE == GUI_LITE:
     import tkinter as tk
     import PIL.ImageTk
     import multiprocessing as mp
-    
+    if 'Raspberry Pi' in PLATFORM:
+        from tkinter import messagebox
+        import subprocess
+else:#GUI_MODE == GUI_LEGACY:
+    import tkinter as tk
+    import PIL.ImageTk
 
 # Constant
-SYSTEM_START_TIME = datetime.datetime.now()
+SYSTEM_START_TIME = datetime.datetime.utcnow()
 THRESHOLD_PERSON_DETECTION = 0.75
 THRESHOLD_PERSON_DETECTION_ASL = 0.30
 THRESHOLD_FACE_DETECTION = 0.95
@@ -89,6 +98,7 @@ COLORS_16 = ((173,255, 47),
              (128,  0,128),
              (128,  0,  0))
 
+# Load a list of machine learning models to be used
 def LoadModelList(PLATFORM):
     if PLATFORM == RASPBERRY_PI_NCS_2 or PLATFORM == RASPBERRY_PI_4_NCS_2:
         list_path  = "./resources/model_list/ncs2.jsonc"
@@ -128,9 +138,9 @@ angle_of_view = 70                              # Angle must be within 180 degre
 cam_id = 0
 cam_x = 1280
 cam_y = 720
-cam_fps = 30           
-size_of_interest_check_area = 70                #(cm)    
-interest_check_area_offset = 0
+cam_fps = 30
+size_of_interest_check_area = 70                #(cm)
+interest_check_area_offset = 0                  #(cm)
 save_way_csv = 'Per software launch'
 auto_start = True
 show_additional_info = True
@@ -172,7 +182,6 @@ def SetupCamera(cam_id, width, height, fps):
 def SetupCSV():
     if not os.path.exists('csv'):
         os.makedirs('csv')
-    global save_way_csv
     if save_way_csv == 'Per date':
         with open('./csv/MICS_' + SYSTEM_START_TIME.strftime('%Y%m%d') + '.csv', 'a', newline='', encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -200,7 +209,12 @@ def SetupModel(ie_core, device_name, model_path_without_extension):
         out_shape   = net.outputs[out_name].shape
 
     if PLATFORM == RASPBERRY_PI or PLATFORM == RASPBERRY_PI_4:
-        exec_net    = ie_core.load_network(network=net, device_name='MYRIAD', num_requests=1)
+        try:
+            exec_net    = ie_core.load_network(network=net, device_name='MYRIAD', num_requests=1)
+        except RuntimeError:
+            print('[Error] Check your Intel Neural Compute Stick or device')
+            exit()
+
     else:
         try:
             exec_net    = ie_core.load_network(network=net, device_name=device_name, num_requests=1)  
@@ -218,6 +232,7 @@ def SetupModel(ie_core, device_name, model_path_without_extension):
                         exec_net    = ie_core.load_network(network=net, device_name='GPU', num_requests=1)
                     except RuntimeError:
                         raise ValueError("No corresponding processor was found.")
+            
     del net
     return input_name, input_shape, out_name, out_shape, exec_net
 
@@ -258,7 +273,6 @@ def GetXYMinMaxFromDetection(x_min, y_min, x_max, y_max, frame):
     x_max = abs(int(x_max * frame.shape[1]))
     y_max = abs(int(y_max * frame.shape[0]))
     return  [x_min, y_min, x_max, y_max]
-
 
 def GetAgeGenderData(face_frame, exec_net, input_name, input_shape):
     detection = GetDetectionData(face_frame, exec_net, input_name, input_shape)
@@ -325,6 +339,7 @@ def DrawHeadPose(frame, head_pose_data, x:int, y:int, color, scale):
 def GetLength(pos1, pos2):
     return math.sqrt((abs(pos2[0] - pos1[0]) * abs(pos2[0] - pos1[0])) + (abs(pos2[1] - pos1[1]) * abs(pos2[1] - pos1[1])))
 
+# Estimates the distance between the camera and the object from the interpupillary distance
 def GetDistanceFromLandmark(eye1, eye2, face_rotation, age_gender_detection, frame_width, frame_hight, angle_of_camera):
     # Get pixel distance of PD (Pupillary distance) 
     length = GetLength(eye1, eye2)
@@ -362,21 +377,19 @@ def GetPerspective(distance, radian_angle_cam_to_face, radian_angle_obj_to_targe
     r = GetLength([0.0, 0.0], [cam_to_point_x, cam_to_point_y])
     return (cam_to_point_x, cam_to_point_y, r)
 
+# Calculate cosine similarity
 def GetCosineSimilarity(vec1, vec2):
     a = np.sum(vec1 * vec2)
     b = math.sqrt(np.sum(vec1 * vec1))
     c = math.sqrt(np.sum(vec2 * vec2))
     return a / (b * c)
 
-def GetPersonCosineSimilarity(vec1, vec2):
+# Calculate the cosine similarity of people
+def GetPersonCosineSimilarity(vec1, vec2, out_name):
     if vec1 == -1 or vec2 == -1:
         return 0.0
-    if PLATFORM == RASPBERRY_PI or PLATFORM == RASPBERRY_PI_4:
-        vec1 = vec1['ip_reid'][:]
-        vec2 = vec2['ip_reid'][:]
-        return GetCosineSimilarity(vec1, vec2)
-    vec1 = vec1['reid_embedding'][:]
-    vec2 = vec2['reid_embedding'][:]
+    vec1 = vec1[out_name][:]
+    vec2 = vec2[out_name][:]
     return GetCosineSimilarity(vec1, vec2)
 
 # Check if it is in the rectangle(rectangle1 is outside)
@@ -386,6 +399,7 @@ def CheckInsideRectangle(x_min1, y_min1, x_max1, y_max1, x_min2, y_min2, x_max2,
     else:
         return False
 
+# Check for contact
 def CheckContactRectangle(x_min1, y_min1, x_max1, y_max1, x_min2, y_min2, x_max2, y_max2):
     if (max(x_min1, x_min2) < min(x_max1, x_max2)) and (max(y_max1, y_max2) > min(y_min1, y_min2)):
         return True
@@ -434,6 +448,7 @@ def GetChildObject(body_class, temporary_face_list, now_time):
         result = -1
     return result
 
+# Push data to file or server
 counted_number = 0
 def PushDatabase(body_class_object, client):
     global counted_number
@@ -455,7 +470,9 @@ def PushDatabase(body_class_object, client):
     end_time = body_class_object.last_time
     # Save as csv file
     if save_mode == 'CSV':
+        try_count = 0
         while True:
+            try_count += 1
             try:
                 if save_way_csv == 'Identical file':
                     with open('./csv/MICS_DATA.csv', 'a', newline='', encoding="utf-8") as f:
@@ -476,26 +493,32 @@ def PushDatabase(body_class_object, client):
                         PrintConsleWindow('[Info] Push person object No.' + str(counted_number) + ' to csv')   
                         break
             except PermissionError:
-                PrintConsleWindow("[PermissionError] Cannot write to CSV file. Please close the CSV file(./csv/MICS_" + SYSTEM_START_TIME.strftime('%Y%m%d%H%M%S') + ".csv). Processing will be temporarily suspended until the file is closed.")
+                if try_count < 100:
+                    PrintConsleWindow("[PermissionError] Cannot write to CSV file. Please close the CSV file(./csv/MICS_" + SYSTEM_START_TIME.strftime('%Y%m%d%H%M%S') + ".csv). Processing will be temporarily suspended until the file is closed.")
+                else:
+                    PrintConsleWindow("[PermissionError] Cannot write to CSV file. After 100 retries, it could not be written, so it continues without writing.")
+                    break
 
     elif save_mode == 'SERVER':
         client.PushDataList(int(interested * 100), int(age), int(gender), start_time.strftime('%Y%m%d%H%M%S'), end_time.strftime('%Y%m%d%H%M%S'))
         PrintConsleWindow('[Info] Push person object No.' + str(counted_number) + ' to waiting list for transmission')   
         pass
 
-
+# Inference of interest based on line of sight and its coordinates
 def IsInterested(perspective):
     if perspective[0] / 10 < (size_of_interest_check_area / 2) + interest_check_area_offset and perspective[0] / 10 > (-size_of_interest_check_area / 2) + interest_check_area_offset:
         return 1.0
     else:
         return 0
 
+# Convert DearPyGUI to handle OpenCV images
 def ConvertImageOpenCVToDearPyGUI(image):
     data = np.flip(image, 2)
     data = data.ravel()
     data = np.asfarray(data, dtype='f')
     return np.true_divide(data, 255.0)
 
+# Print to virtual console of DearPyGUI
 def PrintConsleWindow(text):
     print(text)
     if GUI_MODE == GUI_FULL:
@@ -512,13 +535,29 @@ def PrintConsleWindow(text):
         except SystemError:
             pass
 
+# Save the layout of the DearPyGUI
 def SaveLayout():
     PrintConsleWindow('[Info] Save layout setting to "'+ LAYOUT_SETTING_FILE_PATH + '"')
     dpg.save_init_file(LAYOUT_SETTING_FILE_PATH)
+    pass
 
+def GetTranslationData():
+    now_locale, _ = locale.getdefaultlocale()
+
+    if DISABLE_TRANSLATION == True:
+        now_locale = 'en-US'
+    
+    return gettext.translation(domain='messages',
+                            localedir = 'locale',
+                            languages=[now_locale], 
+                            fallback=True).gettext
 
 # Class
+
+# Unique number throughout
 global_id = 0
+
+# Class to store measurement information
 class Object:
     def __init__(self, input_id, x_min, y_min, x_max, y_max, first_time, last_time):
         self.obj_id = input_id
@@ -538,8 +577,6 @@ class Object:
         self.number_of_frame = 1
         global global_id
         self.global_id = global_id
-        self.check_update_flag = False
-        self.update_flag = False
         global_id += 1
     
     def Update(self, input_id, x_min, y_min, x_max, y_max, last_time):
@@ -566,7 +603,6 @@ class Object:
         self.estimated_y_min = int(y_min) + self.y_delta[1] * self.time_delta[0]
         self.estimated_y_max = int(y_max) + self.y_delta[1] * self.time_delta[0]
         self.number_of_frame += 1
-        self.check_update_flag = True
 
     def GetIOU(self, x_min, y_min, x_max, y_max, now_time):
         time_delta = now_time - self.last_time
@@ -577,13 +613,7 @@ class Object:
         estimated_y_max = int(y_max) + self.y_delta[0] * time_delta
         return GetIOU(x_min, y_min, x_max, y_max, estimated_x_min, estimated_x_max, estimated_y_min, estimated_y_max)
 
-    def CheckUpdate(self):
-        if self.check_update_flag == True:
-            self.update_flag = True
-        else:
-            self.update_flag = False
-        self.check_update_flag = False
-            
+# Person class
 class Body(Object):
     def __init__(self, input_id, x_min, y_min, x_max, y_max, first_time):
         super().__init__(input_id, x_min, y_min, x_max, y_max, first_time, first_time)
@@ -596,6 +626,7 @@ class Body(Object):
     def Update(self, input_id, x_min, y_min, x_max, y_max, last_time):
         super().Update(input_id, x_min, y_min, x_max, y_max, last_time)
 
+    # Update facial information
     def UpdateFaceData(self, age, gender, perspective):
         self.age = age
         if gender == 'male':
@@ -615,12 +646,12 @@ class WebSocketClient():
     def __init__(self, address):
         self.host = address
         self.data_list = []
-        websocket.enableTrace(True)     # print log option
+        websocket.enableTrace(DEBUG_OPTION)     # print debug log option
         self.isConnected = False
         #Setting of WebSocket
         PrintConsleWindow("[Info] Launch as SERVER MODE")
         self.Connect()
-        self.last_time = datetime.datetime.now()
+        self.last_time = datetime.datetime.utcnow()
         if self.isConnected == True:
             self.ws.ping()
 
@@ -647,14 +678,15 @@ class WebSocketClient():
         if self.isConnected == True:
              PrintConsleWindow("[Info] Disonnected")   
              self.ws.close()
-
+    
+    # Ping after checking the passage of time
     def CheckTimeout(self):
         if self.isConnected == True:
-            time_delta = datetime.datetime.now() - self.last_time
+            time_delta = datetime.datetime.utcnow() - self.last_time
             if time_delta > datetime.timedelta(seconds=15):
                 try:
                     self.ws.ping()          # send ping
-                    self.last_time = datetime.datetime.now()
+                    self.last_time = datetime.datetime.utcnow()
                     PrintConsleWindow("[Info] Send ping to server")
                 except BrokenPipeError:
                     PrintConsleWindow("[ERROR] Broken pipe error Can not end ping to server")
@@ -683,19 +715,22 @@ class WebSocketClient():
                         PrintConsleWindow("[Info] Disonnected and stop recording") 
                         self.isConnected = False
 
+    # Add to waiting list
     def PushDataList(self, interested, age, gender, start_time, end_time):
         self.data_list.append((interested, age, gender, start_time, end_time))
 
+    # Send one by one in sequence
     def PushSequentially(self):
         if PLATFORM == RASPBERRY_PI:
             sec = 10
         else:
             sec = 3
-        if len(self.data_list) != 0 and datetime.datetime.now() - self.last_time > datetime.timedelta(seconds=sec):
+        if len(self.data_list) != 0 and datetime.datetime.utcnow() - self.last_time > datetime.timedelta(seconds=sec):
             data_buffer = self.data_list.pop(0)
             self.RunAsThread(data_buffer[0], data_buffer[1], data_buffer[2], data_buffer[3], data_buffer[4])     
-            self.last_time = datetime.datetime.now()
+            self.last_time = datetime.datetime.utcnow()
 
+    # Runs asynchronously as a thread
     def RunAsThread(self, interested, age, gender, start_time, end_time):
         thread.start_new_thread(self.Run, (interested, age, gender, start_time, end_time))
 
@@ -734,6 +769,7 @@ class Settings():
         global interest_check_area_offset
         global save_way_csv
         global auto_start
+        global show_additional_info
         device_name                 = input_device_name
         save_mode                   = input_save_mode
         server_address              = input_server_address
@@ -800,19 +836,6 @@ class Settings():
         pass
 
     def Save(self):
-        global device_name
-        global save_mode
-        global server_address
-        global angle_of_view
-        global cam_id
-        global cam_x
-        global cam_y
-        global cam_fps
-        global size_of_interest_check_area
-        global interest_check_area_offset
-        global save_way_csv
-        global auto_start
-        global show_additional_info
         if not os.path.exists('resources'):
             os.makedirs('resources')
         save_value = {'device_name'                 : device_name                ,
@@ -894,7 +917,6 @@ class MainSystemProcess:
 
     def Loop(self):
         # Get a frame
-        global CAM_ROTATE
         ret, frame = self.capture.read()
         if ret == False:
             print('[ERROR] Can not open camera')
@@ -903,7 +925,7 @@ class MainSystemProcess:
             frame = cv2.rotate(frame, cv2.ROTATE_180)
 
         # Get now time
-        now_time = datetime.datetime.now()
+        now_time = datetime.datetime.utcnow()
     
         # Check server
         if save_mode == 'SERVER':
@@ -987,7 +1009,7 @@ class MainSystemProcess:
                         cos_sim_list = []
                         iou_list = []
                         for i in range(len(temporary_body_list)):
-                            cos_sim = GetPersonCosineSimilarity(temporary_body_list[i][0], self.body_list[j].obj_id)
+                            cos_sim = GetPersonCosineSimilarity(temporary_body_list[i][0], self.body_list[j].obj_id, self.out_name_PR)
                             iou = self.body_list[j].GetIOU(temporary_body_list[i][1], temporary_body_list[i][2], temporary_body_list[i][3], temporary_body_list[i][4], now_time)
                             compare_list.append([iou, cos_sim])
                             cos_sim_list.append([cos_sim])
@@ -1018,20 +1040,13 @@ class MainSystemProcess:
                             color = COLORS_16[(self.body_list[j].global_id + 1) % 16]
                             #cv2.rectangle(frame, (int(body_list[j].estimated_x_min), int(body_list[j].estimated_y_min)), (int(body_list[j].estimated_x_max), int(body_list[j].estimated_y_max)), color, 2)                        
                             cv2.rectangle(frame, (int(self.body_list[j].x_min[0]), int(self.body_list[j].y_min[0])), (int(self.body_list[j].x_max[0]), int(self.body_list[j].y_max[0])), color, 2)                        
-                            cv2.putText(frame, text='id = ' + str(self.body_list[j].global_id), org=(self.body_list[j].x_min[0], self.body_list[j].y_min[0] - 5), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.5, color=color, thickness=2, lineType=cv2.LINE_AA)                              
-
-                    
+                            cv2.putText(frame, text='id = ' + str(self.body_list[j].global_id), org=(self.body_list[j].x_min[0], self.body_list[j].y_min[0] - 5), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.5, color=color, thickness=2, lineType=cv2.LINE_AA)                                       
 
             # Create new body instance
             if len(temporary_body_list) != 0:
                 for i in range(len(temporary_body_list)):
                     if temporary_body_list[i][0] != -1:
                         self.body_list.append(Body(temporary_body_list[i][0], temporary_body_list[i][1], temporary_body_list[i][2], temporary_body_list[i][3], temporary_body_list[i][4], now_time))  
-
-            # CheckUpdate (experimental)     
-            if len(self.body_list) != 0:
-                for j in range(len(self.body_list)):
-                    self.body_list[j].CheckUpdate()
 
             # Get face detection data
             temporary_face_list = []
@@ -1126,7 +1141,7 @@ class MainSystemProcess:
             if len(self.body_list) != 0:
                 di = 0
                 for i in range(len(self.body_list)):
-                    if self.body_list[i - di].last_time - self.body_list[i - di].first_time < datetime.timedelta(seconds=3) and now_time - self.body_list[i - di].last_time > datetime.timedelta(seconds=2):
+                    if self.body_list[i - di].last_time - self.body_list[i - di].first_time < datetime.timedelta(seconds=1) and now_time - self.body_list[i - di].last_time > datetime.timedelta(seconds=0.8):
                         del self.body_list[i - di]
                         di += 1    
     
@@ -1134,18 +1149,18 @@ class MainSystemProcess:
             if len(self.body_list) != 0:
                 di = 0
                 for i in range(len(self.body_list)):
-                    if self.body_list[i - di].last_time - self.body_list[i - di].first_time >= datetime.timedelta(seconds=3) and now_time - self.body_list[i - di].last_time > datetime.timedelta(seconds=10):
+                    if self.body_list[i - di].last_time - self.body_list[i - di].first_time >= datetime.timedelta(seconds=1) and now_time - self.body_list[i - di].last_time > datetime.timedelta(seconds=10):
                         PushDatabase(self.body_list[i - di], self.client)
                         del self.body_list[i - di]
                         di += 1     
 
 
-            # Show FPS
-            frame_rate = DrawFPS(frame, fps_time, 10, 10)
-            if DEBUG_OPTION == True:
-                print(frame_rate)
+        # Show FPS
+        frame_rate = DrawFPS(frame, fps_time, 10, 10)
+        if DEBUG_OPTION == True:
+            print(frame_rate)
 
-            return frame, True
+        return frame, True
 
 # Main
 def Main():
@@ -1154,17 +1169,12 @@ def Main():
     settings.Load()
 
     # Translation
-    now_locale, _ = locale.getdefaultlocale()
-    _ = gettext.translation(domain='messages',
-                            localedir = 'locale',
-                            languages=[now_locale], 
-                            fallback=True).gettext
+    _ = GetTranslationData()
 
     # Gloval var
     global restart_flag
     global counted_number
     global global_id
-    global auto_start
     global is_running
 
     # Setup DearPyGUI
@@ -1291,29 +1301,35 @@ def Main():
     # Loop
     while dpg.is_dearpygui_running():
 
+        is_running = dpg.get_value('is_running')
+
         # Restart
         if restart_flag == True:
             PrintConsleWindow('\n[Info] Reboot the system')
+
             # Close capture and client
             main_system.capture.release()
             if save_mode == 'SERVER':
                 main_system.client.Disonnect()
+
             # Change settings value
             main_system.settings.SetValuesFromDearPyGUI()
+
             # Setup again
             main_system.capture = SetupCamera(cam_id, cam_x, cam_y, cam_fps)
             if save_mode == 'CSV': 
                 SetupCSV()
             if save_mode == 'SERVER':
                 main_system.client = WebSocketClient(server_address)
+
             # Setup person detection
-            main_system.input_name_PD, main_system.input_shape_PD, main_system.out_name_PD, _, main_system.exec_net_PD = SetupModel(main_system.ie, device_name, PD)
+            main_system.input_name_PD,  main_system.input_shape_PD,  main_system.out_name_PD,  _, main_system.exec_net_PD  = SetupModel(main_system.ie, device_name, PD )
             
             # Setup person re-identification
-            main_system.input_name_PR, main_system.input_shape_PR, main_system.out_name_PR, _, main_system.exec_net_PR = SetupModel(main_system.ie, device_name, PR)
+            main_system.input_name_PR,  main_system.input_shape_PR,  main_system.out_name_PR,  _, main_system.exec_net_PR  = SetupModel(main_system.ie, device_name, PR )
             
             # Setup face detection
-            main_system.input_name_FD, main_system.input_shape_FD, main_system.out_name_FD, _, main_system.exec_net_FD = SetupModel(main_system.ie, device_name, FD)
+            main_system.input_name_FD,  main_system.input_shape_FD,  main_system.out_name_FD,  _, main_system.exec_net_FD  = SetupModel(main_system.ie, device_name, FD )
             
             # Setup age gender detectuon
             main_system.input_name_AGD, main_system.input_shape_AGD, main_system.out_name_AGD, _, main_system.exec_net_AGD = SetupModel(main_system.ie, device_name, AGD)
@@ -1322,11 +1338,15 @@ def Main():
             main_system.input_name_LD5, main_system.input_shape_LD5, main_system.out_name_LD5, _, main_system.exec_net_LD5 = SetupModel(main_system.ie, device_name, LD5)
             
             # Setup head pose estimation
-            main_system.input_name_HPE, main_system.input_shape_HPE, main_system.out_name_HPE, _, main_system.exec_net_HPE = SetupModel(main_system.ie, device_name, HPE)            
+            main_system.input_name_HPE, main_system.input_shape_HPE, main_system.out_name_HPE, _, main_system.exec_net_HPE = SetupModel(main_system.ie, device_name, HPE)     
+            
+            # Set values
             is_running = auto_start
             restart_flag = False
             counted_number = 0
             global_id = 0
+
+            # Save settings
             main_system.settings.Save()
             pass
 
@@ -1350,8 +1370,8 @@ def Main():
             dpg.set_value('video_frame', buffer_frame)
             dpg.render_dearpygui_frame()
 
-            #[Developing option] save layout
-            if dpg.is_key_pressed(dpg.mvKey_L) == True:
+            #[DEBUG_OPTION] save layout
+            if DEBUG_OPTION == True and dpg.is_key_pressed(dpg.mvKey_L) == True:
                 SaveLayout() 
 
     # Exit process
@@ -1360,21 +1380,18 @@ def Main():
     main_system.capture.release()
     dpg.destroy_context()
 
-# Main (for RaspberryPi3 or any other legacy device)
+# Main (for RaspberryPi3 or any other devices)
 class MainLiteGui():
     def __init__(self, settings_q_exit, settings_q_width, settings_q_offset, size_of_interest_check_area, interest_check_area_offset):
+
         self.settings_q_exit = settings_q_exit
         self.settings_q_width = settings_q_width
         self.settings_q_offset = settings_q_offset
         self.size_of_interest_check_area = size_of_interest_check_area
         self.interest_check_area_offset = interest_check_area_offset
+
         # Translation
-        self.now_locale, _ = locale.getdefaultlocale()
-        
-        _ = gettext.translation(domain='messages',
-                                localedir = 'locale',
-                                languages=[self.now_locale], 
-                                fallback=True).gettext
+        _ = GetTranslationData()
 
         # Setup tkinter
         window_width = 1280
@@ -1443,10 +1460,25 @@ class MainLiteGui():
 
         info_button = tk.Button(self.window, text=_('Software Information'), font=("", 20), command=lambda:info_frame.tkraise())
         info_button.pack(side = 'left', padx=20)
+
+        if 'Raspberry Pi' in PLATFORM:
+            self.ras_pi_window = tk.Toplevel()
+            self.ras_pi_window.title(_("Raspberry Pi Settings"))
+            self.ras_pi_window.geometry("640x360" + '+' + str(640) + '+' + str(0))
+            self.ras_pi_window.protocol("WM_DELETE_WINDOW", lambda:(self.settings_q_exit.put(1), self.window.destroy()))
+
+            ras_pi_settings_frame = tk.Frame(self.ras_pi_window)
+            ras_pi_settings_label = tk.Label(ras_pi_settings_frame, text=_('Raspberry Pi Settings'), font=("", 20))
+            shutdown_button = tk.Button(ras_pi_settings_frame, text=_('Shutdown'), font=("", 20), command=(lambda:(subprocess.run(['shutdown', '-h', '-t', '5', '-f']), self.settings_q_exit.put(1), self.window.destroy()) if tk.messagebox.askyesno(_('Confirm'), _('Do you want to shut down?')) == True else print("[Info] Shutdown canceled")))
+
+            ras_pi_settings_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+            ras_pi_settings_label.place(x=20, y=10)
+            shutdown_button.place(x=20, y=50)
         
         self.Loop()
         self.window.mainloop()
         pass
+
     def IncreaseParamSize(self):
         self.size_of_interest_check_area = int(self.size_of_interest_check_area) + 1
         self.detect_interest_width_value.config(text= str(self.size_of_interest_check_area).rjust(7) + ' (cm)')
@@ -1501,7 +1533,6 @@ class MainLite():
         p.start()
 
         # Get a frame once
-        global CAM_ROTATE
         ret, frame = self.main_system.capture.read()
         if ret == False:
             print('[ERROR] Can not open camera')
@@ -1578,18 +1609,12 @@ class MainLegacy():
         self.settings.Load()
 
         # Translation
-        self.now_locale, _ = locale.getdefaultlocale()
-        
-        _ = gettext.translation(domain='messages',
-                                localedir = 'locale',
-                                languages=[self.now_locale], 
-                                fallback=True).gettext
+        _ = GetTranslationData()
 
         # Gloval var
         global restart_flag
         global counted_number
         global global_id
-        global auto_start
         global is_running
 
         # Setup tkinter
