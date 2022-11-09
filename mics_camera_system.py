@@ -1,7 +1,7 @@
 # mics_camera_system
 # 2022 kasys1422
 # The core app of MICS(Measuring Interest with a Camera System)
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 
 # Import
 import os
@@ -36,7 +36,7 @@ try:
             SHOW_TPL = False
         DISABLE_TRANSLATION = json_text['DISABLE_TRANSLATION']
 except:
-    print('[Error] Could nor read platform settings. Please check "./resources/platform.jsonc".')
+    print('[Error] Could not read platform settings. Please check "./resources/platform.jsonc".')
     PLATFORM = "Unknown platform"
     GUI_MODE = "Legacy"
     DEBUG_OPTION = False
@@ -129,11 +129,11 @@ def LoadModelList(PLATFORM):
 PD,PR,FD,AGD,LD5,HPE = LoadModelList(PLATFORM)
             
 # Setting param
-device_name = 'MYRIAD'                         # Use MYRIAD
+device_name = 'MYRIAD'                          # Use MYRIAD
 device_name = 'CPU'                             # Use CPU
 save_mode = 'SERVER'
 #save_mode = 'CSV'
-server_address = 'ws://localhost:8000'         #'ws://localhost:8000'
+server_address = 'ws://localhost:8000'          #'ws://localhost:8000'
 angle_of_view = 70                              # Angle must be within 180 degrees
 cam_id = 0
 cam_x = 1280
@@ -211,7 +211,8 @@ def SetupModel(ie_core, device_name, model_path_without_extension):
     if PLATFORM == RASPBERRY_PI or PLATFORM == RASPBERRY_PI_4:
         try:
             exec_net    = ie_core.load_network(network=net, device_name='MYRIAD', num_requests=1)
-        except RuntimeError:
+        except RuntimeError as e:
+            print(e)
             print('[Error] Check your Intel Neural Compute Stick or device')
             exit()
 
@@ -230,8 +231,8 @@ def SetupModel(ie_core, device_name, model_path_without_extension):
                     PrintConsleWindow('[Error] Can not setup device(MYRIAD). Using GPU.')
                     try:
                         exec_net    = ie_core.load_network(network=net, device_name='GPU', num_requests=1)
-                    except RuntimeError:
-                        raise ValueError("No corresponding processor was found.")
+                    except RuntimeError as e:
+                        raise ValueError("Device setup failed. (OpenVINO)\n" + str(e))
             
     del net
     return input_name, input_shape, out_name, out_shape, exec_net
@@ -914,10 +915,19 @@ class MainSystemProcess:
         # Set runnning flag
         global is_running
         is_running = auto_start
+        self.first_frame = True
 
     def Loop(self):
-        # Get a frame
-        ret, frame = self.capture.read()
+
+        # Retrieve the first frame for buffer
+        if self.first_frame == True:
+            ret, self.frame_buf = self.capture.read()
+
+        # Get frame from frame buffer
+        frame = self.frame_buf
+
+        # Stores current image in frame buffer
+        ret, self.frame_buf = self.capture.read()
         if ret == False:
             print('[ERROR] Can not open camera')
             return None, False
@@ -960,13 +970,22 @@ class MainSystemProcess:
                         cv2.rectangle(frame, (x, y),(x+w, y+h),(0,50,255), 3)
 
             else:
-                GetDetectionDataStartAsync(frame, self.exec_net_PD, self.input_name_PD, self.input_shape_PD)
-                GetDetectionDataStartAsync (frame, self.exec_net_FD, self.input_name_FD, self.input_shape_FD)
+                # Receive the results of asynchronous inference from the previous frame
                 while True:
                     if self.exec_net_PD.requests[0].wait(-1) == 0 and self.exec_net_FD.requests[0].wait(-1) == 0:
                         result_of_person_detection = GetDetectionDataGetAsync(self.exec_net_PD, self.out_name_PD)
                         result_of_face_detection = GetDetectionDataGetAsync (self.exec_net_FD, self.out_name_FD)
                         break
+                    # The first frame has no inference result, so the loop is exited
+                    if self.first_frame == True:
+                        break
+                # Asynchronous inference with frame buffer images
+                GetDetectionDataStartAsync(self.frame_buf, self.exec_net_PD, self.input_name_PD, self.input_shape_PD)
+                GetDetectionDataStartAsync (self.frame_buf, self.exec_net_FD, self.input_name_FD, self.input_shape_FD)
+                # Skip the first frame
+                if self.first_frame == True:
+                    self.first_frame = False
+                    return frame, True
                 
                 if 'person-detection-asl-0001' in PD:
                     for person_object in result_of_person_detection[self.out_name_PD]:
@@ -1345,9 +1364,11 @@ def Main():
             restart_flag = False
             counted_number = 0
             global_id = 0
+            main_system.first_frame = True
 
             # Save settings
             main_system.settings.Save()
+            
             pass
 
         # Get processed frame
@@ -1360,7 +1381,7 @@ def Main():
                 video_frame_height = video_frame_width * (cam_y / cam_x)
             else:
                 video_frame_width = video_frame_height * (cam_x / cam_y)
-            buffer_frame = ConvertImageOpenCVToDearPyGUI(cv2.resize(frame, (int(video_frame_width), int(video_frame_height))))
+            buffer_frame = ConvertImageOpenCVToDearPyGUI(cv2.resize(frame, (int(video_frame_width), int(video_frame_height)), cv2.INTER_NEAREST))
             dpg.delete_item('video_window', children_only=True)
             dpg.delete_item('video_frame')
             with dpg.texture_registry(show=False):      
@@ -1554,7 +1575,7 @@ class MainLite():
 
             # Exit process
             try: 
-                buffer_data_exit =  self.main_system.settings_q_exit.get_nowait()
+                buffer_data_exit = self.main_system.settings_q_exit.get_nowait()
                 if buffer_data_exit == 1:
                     print('[Info] GUI closed')
                     break
