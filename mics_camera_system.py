@@ -1,7 +1,7 @@
 # mics_camera_system
 # 2022 kasys1422
 # The core app of MICS(Measuring Interest with a Camera System)
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 
 # Import
 import os

@@ -1,5 +1,5 @@
 {
-   "Model of person detection"        :"./models/2022_1/person-detection-0200/FP16-INT8/person-detection-0200",
+   "Model of person detection"        :"./models/2022_1/person-detection-retail-0013/FP16-INT8/person-detection-retail-0013",
    "Model of person reidentification" :"./models/2022_1/person-reidentification-retail-0288/FP16/person-reidentification-retail-0288",
    "Model of face detection"          :"./models/2022_1/face-detection-retail-0005/FP16-INT8/face-detection-retail-0005",
    "Model of age gender recognition"  :"./models/2022_1/age-gender-recognition-retail-0013/FP16-INT8/age-gender-recognition-retail-0013",
