@@ -1,7 +1,7 @@
 # mics_camera_system
 # 2022 kasys1422
 # The core app of MICS(Measuring Interest with a Camera System)
-VERSION = '0.1.2'
+VERSION = '0.1.3'
 
 # Import
 import os
@@ -129,8 +129,8 @@ def LoadModelList(PLATFORM):
 PD,PR,FD,AGD,LD5,HPE = LoadModelList(PLATFORM)
             
 # Setting param
-device_name = 'MYRIAD'                          # Use MYRIAD
-device_name = 'CPU'                             # Use CPU
+#device_name = 'MYRIAD'                          # Use MYRIAD
+device_name = 'AUTO'                             # Use AUTO
 save_mode = 'SERVER'
 #save_mode = 'CSV'
 server_address = 'ws://localhost:8000'          #'ws://localhost:8000'
@@ -220,19 +220,23 @@ def SetupModel(ie_core, device_name, model_path_without_extension):
         try:
             exec_net    = ie_core.load_network(network=net, device_name=device_name, num_requests=1)  
         except RuntimeError:
-            PrintConsleWindow('[Error] Can not setup device(' + device_name + '). Using CPU.')
+            PrintConsleWindow('[Error] Can not setup device(' + device_name + '). Using AUTO.')
             try:
-                exec_net    = ie_core.load_network(network=net, device_name='CPU', num_requests=1)
+                exec_net    = ie_core.load_network(network=net, device_name='AUTO', num_requests=1)
             except RuntimeError:
-                PrintConsleWindow('[Error] Can not setup device(CPU). Using MYRIAD.')
+                PrintConsleWindow('[Error] Can not setup device(AUTO). Using CPU.')
                 try:
-                    exec_net    = ie_core.load_network(network=net, device_name='MYRIAD', num_requests=1)
+                    exec_net    = ie_core.load_network(network=net, device_name='CPU', num_requests=1)
                 except RuntimeError:
-                    PrintConsleWindow('[Error] Can not setup device(MYRIAD). Using GPU.')
+                    PrintConsleWindow('[Error] Can not setup device(CPU). Using MYRIAD.')
                     try:
-                        exec_net    = ie_core.load_network(network=net, device_name='GPU', num_requests=1)
-                    except RuntimeError as e:
-                        raise ValueError("Device setup failed. (OpenVINO)\n" + str(e))
+                        exec_net    = ie_core.load_network(network=net, device_name='MYRIAD', num_requests=1)
+                    except RuntimeError:
+                        PrintConsleWindow('[Error] Can not setup device(MYRIAD). Using GPU.')
+                        try:
+                            exec_net    = ie_core.load_network(network=net, device_name='GPU', num_requests=1)
+                        except RuntimeError as e:
+                            raise ValueError("Device setup failed. (OpenVINO)\n" + str(e))
             
     del net
     return input_name, input_shape, out_name, out_shape, exec_net
@@ -1245,7 +1249,7 @@ def Main():
         dpg.add_separator()
         dpg.add_text(_('[Advanced settings]'))
         dpg.add_text(_('Inference Processor'))
-        dpg.add_radio_button(tag='device_name', items=['CPU', 'GPU', 'MYRAID'], default_value=device_name)
+        dpg.add_radio_button(tag='device_name', items=['AUTO', 'CPU', 'GPU', 'MYRAID'], default_value=device_name)
         dpg.add_text(_('Where to save data'))
         dpg.add_radio_button(tag='save_mode', items=['CSV', 'SERVER'], default_value=save_mode)
         dpg.add_text(_('Save method<Only CSV mode>'))
