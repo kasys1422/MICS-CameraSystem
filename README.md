@@ -93,7 +93,7 @@
 
 2. OpenVINO Runtime をダウンロードします。
    
-   [Intel® Open Source Technology Center](https://download.01.org/opencv/2020/openvinotoolkit/2020.3/) からl_openvino_toolkit_runtime_raspbian_p_2020.3.34.tgzをダウンロードします。
+   [storage.openvinotoolkit.org](https://storage.openvinotoolkit.org/repositories/openvino/packages/2020.3/) からl_openvino_toolkit_runtime_raspbian_p_2020.3.194.tgzをダウンロードします。
 
 3. ダウンロードしたフォルダに移動します。
 
@@ -106,7 +106,7 @@
 5. ダウンロードしたファイルを展開します。
    
    ```sudo
-   sudo tar -xf l_openvino_toolkit_runtime_raspbian_p_2020.3.34.tgz --strip 1 -C /opt/intel/openvino
+   sudo tar -xf l_openvino_toolkit_runtime_raspbian_p_2020.3.194.tgz --strip 1 -C /opt/intel/openvino
    ```
 
 6. 環境変数を更新します。(ターミナルを開くたびに実行する必要があります)
