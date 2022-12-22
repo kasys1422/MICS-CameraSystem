@@ -91,7 +91,7 @@
 
 2. Download the OpenVINO Runtime.
    
-   Download l_openvino_toolkit_runtime_raspbian_p_2020.3.34.tgz from [Intel® Open Source Technology Center](https://download.01.org/opencv/2020/openvinotoolkit/2020.3/) .
+   Download l_openvino_toolkit_runtime_raspbian_p_2020.3.194.tgz from [storage.openvinotoolkit.org](https://storage.openvinotoolkit.org/repositories/openvino/packages/2020.3/) .
 
 3. Navigate to the folder where you downloaded the software.
 
@@ -104,7 +104,7 @@
 5. Extract the downloaded file.
    
    ```sudo
-   sudo tar -xf l_openvino_toolkit_runtime_raspbian_p_2020.3.34.tgz --strip 1 -C /opt/intel/openvino
+   sudo tar -xf l_openvino_toolkit_runtime_raspbian_p_2020.3.194.tgz --strip 1 -C /opt/intel/openvino
    ```
 
 6. Updates environment variables. (Must be run each time the terminal is opened)
